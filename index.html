@@ -282,9 +282,9 @@
   </div>
   <div class="drop-zone" id="drop-zone">
     <div class="big">Drop a <code>.jsonl</code> here</div>
-    <input type="file" id="file-input" accept=".jsonl,.json,.ndjson,application/jsonl,application/x-ndjson" />
+    <input type="file" id="file-input" />
     <button class="pick" id="pick-file">Choose file…</button>
-    <div class="small">Or click anywhere in this box.</div>
+    <div class="small">Or click anywhere in this box. On iPad, drag a file from the Files app into this page.</div>
   </div>
   <p class="notes">
     Sessions live in <code>~/.claude/projects/&lt;project-slug&gt;/&lt;session-id&gt;.jsonl</code>.
@@ -1097,9 +1097,9 @@
     window.scrollTo(0, 0);
   }
 
-  // --- dropzone handlers
-  const accept = (f) => !!f && /\.(jsonl|json|ndjson)$/i.test(f.name);
-
+  // --- dropzone handlers. No extension pre-filter — iPad Safari types .jsonl
+  // as text/plain and hides it behind `accept`. We accept any file, then let
+  // the JSONL parser report errors if the file is wrong.
   dropZone.addEventListener('click', (e) => {
     if (e.target === pickFile) return;
     fileInput.click();
@@ -1111,25 +1111,26 @@
   });
   ['dragenter', 'dragover'].forEach(ev => dropZone.addEventListener(ev, (e) => {
     e.preventDefault(); e.stopPropagation();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
     dropZone.classList.add('drag-over');
   }));
   ['dragleave', 'dragend'].forEach(ev => dropZone.addEventListener(ev, () => dropZone.classList.remove('drag-over')));
   dropZone.addEventListener('drop', (e) => {
     e.preventDefault(); e.stopPropagation();
     dropZone.classList.remove('drag-over');
-    const f = e.dataTransfer.files && e.dataTransfer.files[0];
-    if (!f) return;
-    if (!accept(f)) { showError('Expected a .jsonl (or .json / .ndjson) file; got: ' + f.name); return; }
-    loadFile(f);
+    const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+    if (f) loadFile(f);
   });
 
-  // allow dropping anywhere once feed is loaded
-  window.addEventListener('dragover', (e) => { e.preventDefault(); });
-  window.addEventListener('drop', (e) => {
-    if (!startScreen.hidden) return; // start screen handles its own
+  // allow dropping anywhere on the page (including over the feed)
+  window.addEventListener('dragover', (e) => {
     e.preventDefault();
-    const f = e.dataTransfer.files && e.dataTransfer.files[0];
-    if (f && accept(f)) loadFile(f);
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+  });
+  window.addEventListener('drop', (e) => {
+    e.preventDefault();
+    const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+    if (f) loadFile(f);
   });
 
   // --- header controls
