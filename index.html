@@ -1,0 +1,1267 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Claude Session Viewer</title>
+<meta name="description" content="Drop a Claude Code session .jsonl file and read the conversation in a Claude-app-style UI. Everything is parsed locally in your browser." />
+<script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.0/dist/purify.min.js"></script>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/styles/github.min.css" id="hljs-light" />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/styles/github-dark.min.css" id="hljs-dark" media="(prefers-color-scheme: dark)" />
+<script src="https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/lib/common.min.js"></script>
+<style>
+  :root {
+    --bg: #faf9f7;
+    --panel: #ffffff;
+    --border: #e8e5de;
+    --border-strong: #d6d2c9;
+    --text: #1f1e1c;
+    --muted: #6b6860;
+    --user-bubble: #efece4;
+    --accent: #c96442;
+    --accent-soft: #f5e9e2;
+    --tool-bg: #f4f1ea;
+    --tool-border: #d8d3c7;
+    --tool-accent: #8a6b4a;
+    --thinking-bg: #f6f3ec;
+    --error: #b8433b;
+    --code-bg: #f4f1ea;
+    --add: #d4e8c6;
+    --add-strong: #5b8a3f;
+    --del: #f0cfc8;
+    --del-strong: #a13e34;
+    --shadow: 0 10px 40px rgba(0,0,0,0.18);
+    --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    --font-mono: "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #1a1a18;
+      --panel: #242421;
+      --border: #36342f;
+      --border-strong: #45423c;
+      --text: #ece9e2;
+      --muted: #a09d93;
+      --user-bubble: #2e2c27;
+      --accent: #d97757;
+      --accent-soft: #3a2b23;
+      --tool-bg: #2a2824;
+      --tool-border: #403d36;
+      --tool-accent: #c89775;
+      --thinking-bg: #24221e;
+      --error: #e07a73;
+      --code-bg: #1f1d1a;
+      --add: #1f3a1a;
+      --add-strong: #8cc670;
+      --del: #3a1a17;
+      --del-strong: #e58378;
+      --shadow: 0 10px 40px rgba(0,0,0,0.6);
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--text); font-family: var(--font-sans); }
+  body { line-height: 1.55; font-size: 15px; min-height: 100vh; }
+  a { color: var(--accent); }
+  button { font-family: inherit; }
+
+  header.topbar {
+    position: sticky; top: 0; z-index: 20;
+    background: var(--panel); border-bottom: 1px solid var(--border);
+    padding: 10px 20px; display: flex; gap: 16px; align-items: center; flex-wrap: wrap;
+  }
+  header.topbar h1 { font-size: 15px; font-weight: 600; margin: 0; white-space: nowrap; }
+  header.topbar .meta { font-size: 12px; color: var(--muted); display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
+  header.topbar .meta code { font-family: var(--font-mono); font-size: 11px; }
+  .controls { margin-left: auto; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .controls input[type="search"] {
+    padding: 6px 10px; border: 1px solid var(--border-strong); border-radius: 6px;
+    background: var(--bg); color: var(--text); font-size: 13px; width: 200px;
+  }
+  .controls button, .icon-btn {
+    padding: 6px 10px; border: 1px solid var(--border-strong); border-radius: 6px;
+    background: var(--panel); color: var(--text); font-size: 13px; cursor: pointer;
+  }
+  .controls button:hover, .icon-btn:hover { background: var(--user-bubble); }
+  .controls label { font-size: 12px; color: var(--muted); display: flex; gap: 4px; align-items: center; cursor: pointer; user-select: none; }
+
+  /* --- start screen with drop zone --- */
+  #start-screen {
+    max-width: 720px; margin: 0 auto; padding: 60px 20px;
+    display: flex; flex-direction: column; gap: 24px; align-items: center;
+  }
+  #start-screen .hero { text-align: center; }
+  #start-screen h2 { font-size: 24px; margin: 0 0 8px; }
+  #start-screen .sub { color: var(--muted); font-size: 14px; margin: 0; }
+  .drop-zone {
+    width: 100%; border: 2px dashed var(--border-strong); border-radius: 14px;
+    padding: 48px 24px; text-align: center; background: var(--panel);
+    transition: border-color 0.15s, background 0.15s;
+    cursor: pointer;
+  }
+  .drop-zone.drag-over { border-color: var(--accent); background: var(--accent-soft); }
+  .drop-zone .big { font-size: 16px; font-weight: 500; margin-bottom: 10px; }
+  .drop-zone .small { font-size: 13px; color: var(--muted); margin-top: 10px; }
+  .drop-zone input[type="file"] { display: none; }
+  .drop-zone button.pick {
+    margin-top: 8px; padding: 8px 16px; border: 1px solid var(--border-strong);
+    background: var(--bg); color: var(--text); border-radius: 8px; cursor: pointer; font-size: 14px;
+  }
+  .drop-zone button.pick:hover { background: var(--user-bubble); }
+  .notes { font-size: 12px; color: var(--muted); text-align: center; max-width: 560px; }
+  .notes code { font-family: var(--font-mono); background: var(--code-bg); padding: 1px 5px; border-radius: 4px; }
+
+  #loading { display: none; padding: 40px; text-align: center; color: var(--muted); }
+  #loading.show { display: block; }
+  #error { color: var(--error); padding: 20px; text-align: center; font-size: 14px; }
+
+  /* --- feed --- */
+  main.feed { max-width: 860px; margin: 0 auto; padding: 24px 20px 120px; }
+  .turn { margin-bottom: 24px; position: relative; }
+  .turn.user { display: flex; justify-content: flex-end; }
+  .bubble {
+    background: var(--user-bubble); border-radius: 14px; padding: 10px 14px;
+    max-width: 85%; white-space: pre-wrap; word-wrap: break-word;
+  }
+  .turn.user .bubble { border-bottom-right-radius: 4px; }
+  .turn.assistant .content { padding: 0; }
+  .turn .ts { font-size: 11px; color: var(--muted); margin-bottom: 4px; }
+  .turn.user .ts { text-align: right; }
+
+  .md { line-height: 1.6; word-wrap: break-word; overflow-wrap: break-word; }
+  .md p { margin: 0 0 0.6em; }
+  .md p:last-child { margin-bottom: 0; }
+  .md pre {
+    background: var(--code-bg); padding: 10px 12px; border-radius: 8px;
+    overflow-x: auto; font-family: var(--font-mono); font-size: 13px;
+    border: 1px solid var(--border); margin: 0.5em 0;
+  }
+  .md code { font-family: var(--font-mono); font-size: 0.92em; background: var(--code-bg); padding: 1px 5px; border-radius: 4px; }
+  .md pre code { padding: 0; background: transparent; border-radius: 0; }
+  .md ul, .md ol { margin: 0.4em 0; padding-left: 1.6em; }
+  .md h1, .md h2, .md h3, .md h4 { margin: 1em 0 0.4em; line-height: 1.3; }
+  .md blockquote { margin: 0.5em 0; padding: 4px 12px; border-left: 3px solid var(--border-strong); color: var(--muted); }
+  .md table { border-collapse: collapse; margin: 0.5em 0; }
+  .md th, .md td { border: 1px solid var(--border-strong); padding: 4px 8px; }
+
+  .thinking {
+    margin: 8px 0; border: 1px dashed var(--border-strong); border-radius: 8px;
+    background: var(--thinking-bg);
+  }
+  .thinking > summary {
+    list-style: none; padding: 6px 12px; cursor: pointer; font-size: 12px;
+    color: var(--muted); user-select: none;
+  }
+  .thinking > summary::before { content: "▸ "; display: inline-block; width: 1em; }
+  .thinking[open] > summary::before { content: "▾ "; }
+  .thinking .body { padding: 4px 14px 10px; font-size: 13px; color: var(--muted); white-space: pre-wrap; font-style: italic; }
+
+  /* --- tool card --- */
+  .tool {
+    margin: 10px 0; border: 1px solid var(--tool-border); border-radius: 10px;
+    background: var(--tool-bg); overflow: hidden;
+  }
+  .tool > summary {
+    list-style: none; padding: 8px 12px; cursor: pointer; font-size: 13px;
+    display: flex; gap: 8px; align-items: center; user-select: none;
+  }
+  .tool > summary::before { content: "▸"; color: var(--muted); font-size: 10px; width: 1em; }
+  .tool[open] > summary::before { content: "▾"; }
+  .tool .name { font-weight: 600; color: var(--tool-accent); font-family: var(--font-mono); font-size: 12px; }
+  .tool .preview { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+  .tool .error-badge { background: var(--error); color: white; font-size: 10px; padding: 1px 6px; border-radius: 999px; }
+  .tool .body { border-top: 1px solid var(--tool-border); padding: 12px; background: var(--panel); }
+  .tool .section-label { font-size: 11px; color: var(--muted); font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; margin: 10px 0 4px; display: flex; align-items: center; gap: 8px; }
+  .tool .section-label:first-child { margin-top: 0; }
+  .tool .section-label button { padding: 2px 6px; font-size: 11px; border: 1px solid var(--border-strong); border-radius: 4px; background: var(--bg); color: var(--muted); cursor: pointer; }
+  .tool .section-label button:hover { color: var(--text); }
+  .tool pre.code-block, .tool .result-text {
+    background: var(--code-bg); padding: 8px 10px; border-radius: 6px;
+    font-family: var(--font-mono); font-size: 12px;
+    overflow-x: auto; margin: 0; max-height: 420px; overflow-y: auto;
+    white-space: pre-wrap; word-wrap: break-word;
+  }
+  .tool pre.code-block { white-space: pre; }
+  .tool .result-text.result-error { border-left: 3px solid var(--error); padding-left: 10px; }
+
+  /* key-value row for structured tool input */
+  .kv { display: grid; grid-template-columns: max-content 1fr; gap: 4px 12px; font-size: 12px; margin: 0 0 6px; }
+  .kv .k { color: var(--muted); font-family: var(--font-mono); }
+  .kv .v { font-family: var(--font-mono); word-break: break-all; }
+
+  .file-header {
+    display: flex; justify-content: space-between; align-items: center;
+    font-family: var(--font-mono); font-size: 12px; gap: 12px;
+    padding: 6px 10px; background: var(--code-bg); border-radius: 6px; margin-bottom: 6px;
+  }
+  .file-header .path { color: var(--tool-accent); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .file-header .meta-sm { color: var(--muted); font-size: 11px; white-space: nowrap; }
+  .file-header button { padding: 2px 8px; font-size: 11px; border: 1px solid var(--border-strong); border-radius: 4px; background: var(--bg); color: var(--text); cursor: pointer; }
+  .file-header button:hover { background: var(--user-bubble); }
+
+  .diff-block { display: grid; gap: 6px; }
+  .diff-side { font-family: var(--font-mono); font-size: 12px; border-radius: 6px; padding: 8px 10px; white-space: pre-wrap; max-height: 260px; overflow: auto; border-left: 3px solid var(--border-strong); }
+  .diff-side.old { background: var(--del); border-left-color: var(--del-strong); }
+  .diff-side.new { background: var(--add); border-left-color: var(--add-strong); }
+  .diff-side .label { font-size: 10px; color: var(--muted); letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 4px; }
+
+  .system-divider { text-align: center; color: var(--muted); font-size: 11px; padding: 12px 0; border-top: 1px dashed var(--border-strong); border-bottom: 1px dashed var(--border-strong); margin: 20px 0; text-transform: uppercase; letter-spacing: 0.08em; }
+  .system-event { font-family: var(--font-mono); font-size: 12px; color: var(--muted); background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; margin: 8px 0; }
+
+  .role-label { font-size: 11px; color: var(--muted); font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; margin-bottom: 4px; display: flex; gap: 8px; align-items: center; }
+  .role-label .model { font-family: var(--font-mono); font-size: 10px; text-transform: none; letter-spacing: 0; color: var(--muted); opacity: 0.8; }
+
+  .copy-btn {
+    position: absolute; top: 0; right: 0; opacity: 0; transition: opacity 0.15s;
+    background: var(--panel); border: 1px solid var(--border-strong); border-radius: 6px;
+    font-size: 11px; padding: 3px 8px; cursor: pointer; color: var(--muted);
+  }
+  .turn:hover .copy-btn { opacity: 1; }
+  .copy-btn:hover { color: var(--text); }
+  .copy-btn.copied { color: var(--accent); }
+
+  img.inline-img { max-width: 100%; border-radius: 8px; display: block; margin: 6px 0; border: 1px solid var(--border); }
+
+  .hide-thinking .thinking { display: none; }
+  .hide-tools .tool { display: none; }
+
+  footer.bottombar { position: fixed; bottom: 0; left: 0; right: 0; padding: 8px 16px; background: var(--panel); border-top: 1px solid var(--border); font-size: 12px; color: var(--muted); display: flex; justify-content: space-between; z-index: 10; }
+  #match-count { font-variant-numeric: tabular-nums; }
+
+  mark.hl { background: #ffe37a; color: #1f1e1c; padding: 0 2px; border-radius: 2px; }
+
+  /* --- modal --- */
+  .modal {
+    position: fixed; inset: 0; z-index: 100; display: flex; align-items: center; justify-content: center;
+  }
+  .modal[hidden] { display: none; }
+  .modal .backdrop {
+    position: absolute; inset: 0; background: rgba(0,0,0,0.45); backdrop-filter: blur(2px);
+  }
+  .modal .panel {
+    position: relative; background: var(--panel); border-radius: 12px; box-shadow: var(--shadow);
+    width: min(980px, 94vw); max-height: 88vh; display: flex; flex-direction: column;
+    border: 1px solid var(--border);
+  }
+  .modal .head {
+    padding: 12px 16px; border-bottom: 1px solid var(--border);
+    display: flex; gap: 12px; align-items: center; flex-wrap: wrap;
+  }
+  .modal .head .title { font-family: var(--font-mono); font-size: 13px; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .modal .head .meta-sm { color: var(--muted); font-size: 12px; }
+  .modal .head button { padding: 4px 10px; font-size: 12px; border: 1px solid var(--border-strong); border-radius: 6px; background: var(--bg); color: var(--text); cursor: pointer; }
+  .modal .head button:hover { background: var(--user-bubble); }
+  .modal .body { overflow: auto; padding: 0; }
+  .modal .body pre { margin: 0; padding: 16px; font-family: var(--font-mono); font-size: 13px; line-height: 1.5; background: var(--code-bg); }
+  .modal .body pre.wrap { white-space: pre-wrap; word-wrap: break-word; }
+  .modal.render-md .body { padding: 16px 20px; }
+
+  /* dark hljs when dark mode */
+  @media (prefers-color-scheme: light) { #hljs-dark { display: none; } }
+</style>
+</head>
+<body>
+<header class="topbar">
+  <h1>Claude Session Viewer</h1>
+  <div class="meta" id="meta-area"></div>
+  <div class="controls" id="controls-area" hidden>
+    <input id="search" type="search" placeholder="Search conversation…" />
+    <label><input type="checkbox" id="toggle-thinking" checked /> thinking</label>
+    <label><input type="checkbox" id="toggle-tools" checked /> tools</label>
+    <button id="expand-all">Expand all</button>
+    <button id="collapse-all">Collapse all</button>
+    <button id="copy-all">Copy all</button>
+    <button id="load-new">Load another</button>
+  </div>
+</header>
+
+<section id="start-screen">
+  <div class="hero">
+    <h2>View a Claude Code session</h2>
+    <p class="sub">Drop your session <code>.jsonl</code> below to render it as a chat transcript.</p>
+  </div>
+  <div class="drop-zone" id="drop-zone">
+    <div class="big">Drop a <code>.jsonl</code> here</div>
+    <input type="file" id="file-input" accept=".jsonl,.json,.ndjson,application/jsonl,application/x-ndjson" />
+    <button class="pick" id="pick-file">Choose file…</button>
+    <div class="small">Or click anywhere in this box.</div>
+  </div>
+  <p class="notes">
+    Sessions live in <code>~/.claude/projects/&lt;project-slug&gt;/&lt;session-id&gt;.jsonl</code>.
+    Everything runs in your browser — the file never leaves your machine.
+  </p>
+  <div id="error"></div>
+</section>
+
+<div id="loading"><em>Parsing session…</em></div>
+<main class="feed" id="feed" hidden></main>
+
+<footer class="bottombar" hidden id="bottombar">
+  <span>Claude Session Viewer</span>
+  <span id="match-count"></span>
+</footer>
+
+<div class="modal" id="modal" hidden>
+  <div class="backdrop" data-close></div>
+  <div class="panel">
+    <div class="head">
+      <span class="title" id="modal-title"></span>
+      <span class="meta-sm" id="modal-meta"></span>
+      <button id="modal-copy">Copy</button>
+      <button id="modal-close" data-close>×</button>
+    </div>
+    <div class="body" id="modal-body"></div>
+  </div>
+</div>
+
+<script>
+(function() {
+  // --------------------------------------------------------------- Parsing logic
+
+  const SKIP_TYPES = new Set([
+    'queue-operation', 'file-history-snapshot', 'last-prompt',
+    'agent-name', 'progress',
+  ]);
+  const SKIP_SYSTEM_SUBTYPES = new Set(['bridge_status', 'turn_duration']);
+
+  function parseJsonl(text) {
+    const out = [];
+    let pos = 0;
+    const len = text.length;
+    while (pos < len) {
+      let nl = text.indexOf('\n', pos);
+      if (nl === -1) nl = len;
+      const line = text.slice(pos, nl).trim();
+      pos = nl + 1;
+      if (!line) continue;
+      try { out.push(JSON.parse(line)); } catch (e) { /* skip bad line */ }
+    }
+    return out;
+  }
+
+  function collectToolResults(records) {
+    const out = {};
+    for (const r of records) {
+      if (r.type !== 'user') continue;
+      const content = r.message && r.message.content;
+      if (!Array.isArray(content)) continue;
+      for (const part of content) {
+        if (part.type !== 'tool_result') continue;
+        out[part.tool_use_id] = {
+          content: part.content,
+          is_error: !!part.is_error,
+          timestamp: r.timestamp,
+        };
+      }
+    }
+    return out;
+  }
+
+  function normalizeResult(raw) {
+    if (!raw) return null;
+    const texts = [], images = [], tool_refs = [];
+    if (typeof raw.content === 'string') {
+      texts.push(raw.content);
+    } else if (Array.isArray(raw.content)) {
+      for (const p of raw.content) {
+        if (p.type === 'text') texts.push(p.text || '');
+        else if (p.type === 'image') {
+          const src = p.source || {};
+          images.push({ media_type: src.media_type, data: src.data });
+        } else if (p.type === 'tool_reference') tool_refs.push(p.tool_name || '');
+      }
+    }
+    return {
+      text: texts.join('\n\n'),
+      images,
+      tool_refs,
+      is_error: !!raw.is_error,
+      timestamp: raw.timestamp,
+    };
+  }
+
+  function buildEvents(records) {
+    const results = collectToolResults(records);
+    const events = [];
+    let current = null;
+    const flush = () => { if (current) { events.push(current); current = null; } };
+
+    for (const r of records) {
+      const t = r.type;
+      if (SKIP_TYPES.has(t)) continue;
+
+      if (t === 'system') {
+        const sub = r.subtype;
+        if (SKIP_SYSTEM_SUBTYPES.has(sub)) continue;
+        flush();
+        if (sub === 'compact_boundary') events.push({ kind: 'compact', timestamp: r.timestamp });
+        else if (sub === 'local_command') events.push({ kind: 'system', content: r.content || '', timestamp: r.timestamp });
+        continue;
+      }
+
+      if (t === 'user') {
+        const content = r.message && r.message.content;
+        const textParts = [];
+        const imageParts = [];
+        let hasPlain = false;
+        if (typeof content === 'string') { textParts.push(content); hasPlain = true; }
+        else if (Array.isArray(content)) {
+          for (const p of content) {
+            if (p.type === 'text') { textParts.push(p.text || ''); hasPlain = true; }
+            else if (p.type === 'image') {
+              const src = p.source || {};
+              imageParts.push({ media_type: src.media_type, data: src.data });
+              hasPlain = true;
+            }
+          }
+        }
+        if (hasPlain) {
+          flush();
+          events.push({
+            kind: 'user',
+            text: textParts.join('\n\n').trim(),
+            images: imageParts,
+            timestamp: r.timestamp,
+          });
+        }
+        continue;
+      }
+
+      if (t === 'assistant') {
+        const msg = r.message || {};
+        const mid = msg.id;
+        const model = msg.model;
+        const parts = msg.content || [];
+        if (!current || current.id !== mid) {
+          flush();
+          current = { kind: 'assistant', id: mid, model, timestamp: r.timestamp, parts: [] };
+        }
+        for (const p of parts) {
+          if (p.type === 'text') {
+            const text = p.text || '';
+            if (text) current.parts.push({ type: 'text', text });
+          } else if (p.type === 'thinking') {
+            const th = p.thinking || '';
+            if (th.trim()) current.parts.push({ type: 'thinking', text: th });
+          } else if (p.type === 'tool_use') {
+            current.parts.push({
+              type: 'tool_use',
+              id: p.id,
+              name: p.name,
+              input: p.input,
+              result: normalizeResult(results[p.id]),
+            });
+          }
+        }
+      }
+    }
+    flush();
+    return events;
+  }
+
+  function extractMeta(records) {
+    let session_id = null, cwd = null, title = null, first_model = null, version = null, started = null, ended = null;
+    const models = new Set();
+    for (const r of records) {
+      if (!session_id) session_id = r.sessionId;
+      if (!cwd && r.cwd) cwd = r.cwd;
+      if (!version && r.version) version = r.version;
+      if (r.type === 'custom-title' && !title) title = r.customTitle;
+      if (r.timestamp) { if (!started) started = r.timestamp; ended = r.timestamp; }
+      if (r.type === 'assistant') {
+        const m = r.message && r.message.model;
+        if (m && m !== '<synthetic>') { models.add(m); if (!first_model) first_model = m; }
+      }
+    }
+    return { session_id, cwd, title, model: first_model, models: Array.from(models).sort(), version, started, ended };
+  }
+
+  // --------------------------------------------------------------- Rendering
+
+  marked.setOptions({
+    gfm: true, breaks: false, mangle: false, headerIds: false,
+    highlight: function(code, lang) {
+      try {
+        if (lang && hljs.getLanguage(lang)) return hljs.highlight(code, { language: lang }).value;
+        return hljs.highlightAuto(code).value;
+      } catch (e) { return code; }
+    }
+  });
+
+  const renderMd = (text) => {
+    if (!text) return '';
+    return DOMPurify.sanitize(marked.parse(text), { ADD_ATTR: ['target'] });
+  };
+
+  const escapeHtml = (s) => (s == null ? '' : String(s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;'));
+
+  const fmtTime = (iso) => {
+    if (!iso) return '';
+    const d = new Date(iso);
+    if (isNaN(d)) return iso;
+    return d.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'medium' });
+  };
+
+  const fmtBytes = (n) => {
+    if (n == null) return '';
+    if (n < 1024) return n + ' B';
+    if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
+    return (n / 1024 / 1024).toFixed(2) + ' MB';
+  };
+
+  const el = (tag, props, children) => {
+    const n = document.createElement(tag);
+    if (props) Object.entries(props).forEach(([k, v]) => {
+      if (v == null) return;
+      if (k === 'class') n.className = v;
+      else if (k === 'html') n.innerHTML = v;
+      else if (k === 'onclick') n.addEventListener('click', v);
+      else if (k === 'dataset') Object.assign(n.dataset, v);
+      else n.setAttribute(k, v);
+    });
+    if (children) (Array.isArray(children) ? children : [children]).forEach(c => {
+      if (c == null) return;
+      if (typeof c === 'string') n.appendChild(document.createTextNode(c));
+      else n.appendChild(c);
+    });
+    return n;
+  };
+
+  // --- language detection from filename
+  const EXT_LANG = {
+    js: 'javascript', jsx: 'javascript', mjs: 'javascript', cjs: 'javascript',
+    ts: 'typescript', tsx: 'typescript',
+    py: 'python', rb: 'ruby', go: 'go', rs: 'rust',
+    java: 'java', kt: 'kotlin', swift: 'swift',
+    c: 'c', h: 'c', cc: 'cpp', cpp: 'cpp', hpp: 'cpp',
+    cs: 'csharp', php: 'php', pl: 'perl', lua: 'lua',
+    sh: 'bash', bash: 'bash', zsh: 'bash', fish: 'bash',
+    json: 'json', yaml: 'yaml', yml: 'yaml', toml: 'ini', ini: 'ini',
+    xml: 'xml', html: 'xml', htm: 'xml', svg: 'xml', vue: 'xml',
+    css: 'css', scss: 'scss', sass: 'scss', less: 'less',
+    md: 'markdown', markdown: 'markdown',
+    sql: 'sql', dockerfile: 'dockerfile',
+    tf: 'hcl', hcl: 'hcl',
+  };
+  const langOf = (filename) => {
+    if (!filename) return '';
+    const name = filename.split('/').pop().toLowerCase();
+    if (name === 'dockerfile' || name.endsWith('.dockerfile')) return 'dockerfile';
+    if (name === 'makefile') return 'makefile';
+    const ext = name.split('.').pop();
+    return EXT_LANG[ext] || '';
+  };
+
+  // --- modal
+  const modalEl = document.getElementById('modal');
+  const modalTitle = document.getElementById('modal-title');
+  const modalMeta = document.getElementById('modal-meta');
+  const modalBody = document.getElementById('modal-body');
+  const modalCopy = document.getElementById('modal-copy');
+  let modalCurrentText = '';
+
+  function openModal({ title, meta, content, lang, wrap, markdown }) {
+    modalTitle.textContent = title || '';
+    modalMeta.textContent = meta || '';
+    modalCurrentText = content || '';
+    modalBody.innerHTML = '';
+    modalEl.classList.toggle('render-md', !!markdown);
+    if (markdown) {
+      const div = document.createElement('div');
+      div.className = 'md';
+      div.innerHTML = renderMd(content || '');
+      modalBody.appendChild(div);
+    } else {
+      const pre = document.createElement('pre');
+      if (wrap) pre.classList.add('wrap');
+      const code = document.createElement('code');
+      if (lang) code.className = 'language-' + lang;
+      code.textContent = content || '';
+      pre.appendChild(code);
+      modalBody.appendChild(pre);
+      try { hljs.highlightElement(code); } catch (e) {}
+    }
+    modalEl.hidden = false;
+    document.body.style.overflow = 'hidden';
+  }
+
+  function closeModal() {
+    modalEl.hidden = true;
+    document.body.style.overflow = '';
+    modalCurrentText = '';
+  }
+
+  modalEl.addEventListener('click', (e) => {
+    if (e.target.closest('[data-close]')) closeModal();
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !modalEl.hidden) closeModal();
+  });
+  modalCopy.addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText(modalCurrentText);
+      const prev = modalCopy.textContent;
+      modalCopy.textContent = 'Copied!';
+      setTimeout(() => { modalCopy.textContent = prev; }, 1200);
+    } catch (err) { alert('Copy failed: ' + err.message); }
+  });
+
+  // --- copy button helper
+  const makeCopyBtn = (getText, className = 'copy-btn') => {
+    const btn = el('button', { class: className }, 'copy');
+    btn.addEventListener('click', async (ev) => {
+      ev.stopPropagation();
+      try {
+        await navigator.clipboard.writeText(getText());
+        btn.textContent = 'copied';
+        btn.classList.add('copied');
+        setTimeout(() => { btn.textContent = 'copy'; btn.classList.remove('copied'); }, 1200);
+      } catch (err) { btn.textContent = 'error'; }
+    });
+    return btn;
+  };
+
+  // --- render user message
+  const renderUser = (e) => {
+    const bubble = el('div', { class: 'bubble' });
+    if (e.text) bubble.appendChild(el('div', { class: 'md', html: renderMd(e.text) }));
+    (e.images || []).forEach(img => {
+      if (img.data) bubble.appendChild(el('img', { class: 'inline-img', src: 'data:' + (img.media_type || 'image/png') + ';base64,' + img.data, alt: 'image' }));
+    });
+    const wrap = el('div', { class: 'turn user' });
+    const inner = el('div');
+    if (e.timestamp) inner.appendChild(el('div', { class: 'ts' }, fmtTime(e.timestamp)));
+    inner.appendChild(bubble);
+    inner.appendChild(makeCopyBtn(() => e.text || ''));
+    wrap.appendChild(inner);
+    return wrap;
+  };
+
+  // --- render assistant parts
+  const renderPart = (part) => {
+    if (part.type === 'text') return el('div', { class: 'md', html: renderMd(part.text) });
+    if (part.type === 'thinking') {
+      const d = el('details', { class: 'thinking' });
+      d.appendChild(el('summary', null, 'Thinking'));
+      d.appendChild(el('div', { class: 'body' }, part.text));
+      return d;
+    }
+    if (part.type === 'tool_use') return renderToolUse(part);
+    return null;
+  };
+
+  // --- tool use summary preview (for collapsed header)
+  const summarizeInput = (name, input) => {
+    if (!input || typeof input !== 'object') return '';
+    switch (name) {
+      case 'Read':
+      case 'Write':
+      case 'Edit':
+      case 'NotebookEdit':
+        return input.file_path || input.notebook_path || '';
+      case 'Bash':
+        return input.command || input.description || '';
+      case 'Grep':
+        return input.pattern + (input.path ? '  ' + input.path : '');
+      case 'Glob':
+        return input.pattern + (input.path ? '  ' + input.path : '');
+      case 'WebFetch':
+      case 'WebSearch':
+        return input.url || input.query || input.prompt || '';
+      case 'Agent':
+      case 'Task':
+      case 'AgentCreate':
+        return input.description || input.subagent_type || (input.prompt ? String(input.prompt).slice(0, 120) : '');
+      case 'TodoWrite':
+      case 'TaskCreate':
+      case 'TaskUpdate':
+        return (input.title || input.description || '');
+      case 'ExitPlanMode':
+        return 'exit plan';
+      case 'Skill':
+        return input.skill || '';
+    }
+    if (input.file_path) return input.file_path;
+    if (input.path) return input.path;
+    if (input.command) return input.command;
+    if (input.pattern) return input.pattern;
+    if (input.url) return input.url;
+    if (input.description) return input.description;
+    if (input.prompt) return String(input.prompt).slice(0, 120);
+    try { return JSON.stringify(input).slice(0, 120); } catch (e) { return ''; }
+  };
+
+  // --- render tool_use with per-tool specialization
+  function renderToolUse(part) {
+    const tool = el('details', { class: 'tool' });
+    const summary = el('summary');
+    summary.appendChild(el('span', { class: 'name' }, part.name || 'tool'));
+    summary.appendChild(el('span', { class: 'preview' }, summarizeInput(part.name, part.input)));
+    if (part.result && part.result.is_error) summary.appendChild(el('span', { class: 'error-badge' }, 'error'));
+    tool.appendChild(summary);
+
+    const body = el('div', { class: 'body' });
+    const input = part.input || {};
+
+    switch (part.name) {
+      case 'Write':
+        renderWriteInput(body, input);
+        break;
+      case 'Edit':
+        renderEditInput(body, input);
+        break;
+      case 'NotebookEdit':
+        renderEditInput(body, input);
+        break;
+      case 'Read':
+        renderReadInput(body, input);
+        break;
+      case 'Bash':
+        renderBashInput(body, input);
+        break;
+      case 'Grep':
+      case 'Glob':
+        renderSearchInput(body, input);
+        break;
+      case 'WebFetch':
+      case 'WebSearch':
+        renderWebInput(body, input);
+        break;
+      case 'TodoWrite':
+        renderTodoWrite(body, input);
+        break;
+      case 'Agent':
+      case 'Task':
+      case 'AgentCreate':
+        renderAgentInput(body, input);
+        break;
+      default:
+        renderGenericInput(body, input);
+    }
+
+    if (part.result) renderResult(body, part.result, part.name, input);
+
+    tool.appendChild(body);
+    return tool;
+  }
+
+  function fileHeader(path, { bytes, lines, onView, viewLabel } = {}) {
+    const row = el('div', { class: 'file-header' });
+    row.appendChild(el('span', { class: 'path' }, path || ''));
+    const metaBits = [];
+    if (lines != null) metaBits.push(lines + ' lines');
+    if (bytes != null) metaBits.push(fmtBytes(bytes));
+    if (metaBits.length) row.appendChild(el('span', { class: 'meta-sm' }, metaBits.join(' · ')));
+    if (onView) {
+      const btn = el('button', null, viewLabel || 'View full');
+      btn.addEventListener('click', (ev) => { ev.preventDefault(); ev.stopPropagation(); onView(); });
+      row.appendChild(btn);
+    }
+    return row;
+  }
+
+  function renderWriteInput(body, input) {
+    const content = input.content || '';
+    const path = input.file_path || '';
+    const lang = langOf(path);
+    const bytes = new Blob([content]).size;
+    const lines = content ? content.split('\n').length : 0;
+
+    body.appendChild(el('div', { class: 'section-label' }, 'Write'));
+    body.appendChild(fileHeader(path, {
+      bytes, lines,
+      onView: () => openModal({
+        title: path,
+        meta: lines + ' lines · ' + fmtBytes(bytes),
+        content, lang,
+        markdown: lang === 'markdown',
+      }),
+      viewLabel: 'View full content',
+    }));
+
+    // Preview (first 20 lines)
+    const previewLines = content.split('\n').slice(0, 20);
+    const preview = previewLines.join('\n');
+    const pre = el('pre', { class: 'code-block' });
+    const code = el('code', { class: lang ? 'language-' + lang : '' });
+    code.textContent = preview + (previewLines.length < (content.split('\n').length) ? '\n…' : '');
+    pre.appendChild(code);
+    body.appendChild(pre);
+    try { hljs.highlightElement(code); } catch (e) {}
+  }
+
+  function renderEditInput(body, input) {
+    const path = input.file_path || input.notebook_path || '';
+    const lang = langOf(path);
+    const oldStr = input.old_string || '';
+    const newStr = input.new_string || input.new_source || '';
+
+    body.appendChild(el('div', { class: 'section-label' }, 'Edit'));
+    body.appendChild(fileHeader(path, {
+      onView: () => {
+        // Show both side-by-side in the modal
+        const pre = escapeHtml;
+        const html =
+          '<div style="display:grid;gap:12px;padding:16px;">' +
+          '<div><div style="font-size:10px;color:var(--muted);letter-spacing:.08em;text-transform:uppercase;margin-bottom:4px">Old</div>' +
+          '<pre class="wrap" style="margin:0;padding:12px;background:var(--del);border-left:3px solid var(--del-strong);border-radius:6px;font-family:var(--font-mono);font-size:13px">' +
+          '<code class="' + (lang ? 'language-' + lang : '') + '">' + pre(oldStr) + '</code></pre></div>' +
+          '<div><div style="font-size:10px;color:var(--muted);letter-spacing:.08em;text-transform:uppercase;margin-bottom:4px">New</div>' +
+          '<pre class="wrap" style="margin:0;padding:12px;background:var(--add);border-left:3px solid var(--add-strong);border-radius:6px;font-family:var(--font-mono);font-size:13px">' +
+          '<code class="' + (lang ? 'language-' + lang : '') + '">' + pre(newStr) + '</code></pre></div></div>';
+        modalTitle.textContent = path;
+        modalMeta.textContent = input.replace_all ? 'replace_all: true' : '';
+        modalCurrentText = '--- OLD ---\n' + oldStr + '\n\n--- NEW ---\n' + newStr;
+        modalBody.innerHTML = html;
+        modalBody.querySelectorAll('code').forEach(c => { try { hljs.highlightElement(c); } catch (e) {} });
+        modalEl.hidden = false;
+        document.body.style.overflow = 'hidden';
+      },
+      viewLabel: 'View diff',
+    }));
+
+    const diff = el('div', { class: 'diff-block' });
+    const oldBlock = el('div', { class: 'diff-side old' });
+    oldBlock.appendChild(el('div', { class: 'label' }, 'Old'));
+    oldBlock.appendChild(el('span', null, previewText(oldStr, 8)));
+    const newBlock = el('div', { class: 'diff-side new' });
+    newBlock.appendChild(el('div', { class: 'label' }, 'New'));
+    newBlock.appendChild(el('span', null, previewText(newStr, 8)));
+    diff.appendChild(oldBlock);
+    diff.appendChild(newBlock);
+    body.appendChild(diff);
+    if (input.replace_all) {
+      body.appendChild(el('div', { class: 'section-label' }, 'replace_all: true'));
+    }
+  }
+
+  function previewText(text, maxLines) {
+    if (!text) return '';
+    const lines = text.split('\n');
+    if (lines.length <= maxLines) return text;
+    return lines.slice(0, maxLines).join('\n') + '\n…';
+  }
+
+  function renderReadInput(body, input) {
+    body.appendChild(el('div', { class: 'section-label' }, 'Read'));
+    const kv = el('div', { class: 'kv' });
+    if (input.file_path) { kv.appendChild(el('span', { class: 'k' }, 'file_path')); kv.appendChild(el('span', { class: 'v' }, input.file_path)); }
+    if (input.offset != null) { kv.appendChild(el('span', { class: 'k' }, 'offset')); kv.appendChild(el('span', { class: 'v' }, String(input.offset))); }
+    if (input.limit != null) { kv.appendChild(el('span', { class: 'k' }, 'limit')); kv.appendChild(el('span', { class: 'v' }, String(input.limit))); }
+    if (input.pages) { kv.appendChild(el('span', { class: 'k' }, 'pages')); kv.appendChild(el('span', { class: 'v' }, String(input.pages))); }
+    body.appendChild(kv);
+  }
+
+  function renderBashInput(body, input) {
+    body.appendChild(el('div', { class: 'section-label' }, 'Bash'));
+    if (input.description) body.appendChild(el('div', { class: 'kv' }, [el('span', { class: 'k' }, 'description'), el('span', { class: 'v' }, input.description)]));
+    const pre = el('pre', { class: 'code-block' });
+    const code = el('code', { class: 'language-bash' });
+    code.textContent = input.command || '';
+    pre.appendChild(code);
+    body.appendChild(pre);
+    try { hljs.highlightElement(code); } catch (e) {}
+    if (input.timeout) body.appendChild(el('div', { class: 'kv' }, [el('span', { class: 'k' }, 'timeout'), el('span', { class: 'v' }, input.timeout + 'ms')]));
+    if (input.run_in_background) body.appendChild(el('div', { class: 'kv' }, [el('span', { class: 'k' }, 'background'), el('span', { class: 'v' }, 'true')]));
+  }
+
+  function renderSearchInput(body, input) {
+    body.appendChild(el('div', { class: 'section-label' }, 'Input'));
+    const kv = el('div', { class: 'kv' });
+    Object.keys(input).forEach(k => {
+      const v = input[k];
+      kv.appendChild(el('span', { class: 'k' }, k));
+      kv.appendChild(el('span', { class: 'v' }, typeof v === 'string' ? v : JSON.stringify(v)));
+    });
+    body.appendChild(kv);
+  }
+
+  function renderWebInput(body, input) {
+    body.appendChild(el('div', { class: 'section-label' }, 'Input'));
+    const kv = el('div', { class: 'kv' });
+    if (input.url) {
+      kv.appendChild(el('span', { class: 'k' }, 'url'));
+      const link = el('a', { href: input.url, target: '_blank', rel: 'noopener' }, input.url);
+      const wrap = el('span', { class: 'v' }); wrap.appendChild(link);
+      kv.appendChild(wrap);
+    }
+    if (input.query) { kv.appendChild(el('span', { class: 'k' }, 'query')); kv.appendChild(el('span', { class: 'v' }, input.query)); }
+    if (input.prompt) { kv.appendChild(el('span', { class: 'k' }, 'prompt')); kv.appendChild(el('span', { class: 'v' }, String(input.prompt).slice(0, 200))); }
+    body.appendChild(kv);
+  }
+
+  function renderTodoWrite(body, input) {
+    const todos = input.todos || [];
+    body.appendChild(el('div', { class: 'section-label' }, 'TodoWrite'));
+    if (!todos.length) { body.appendChild(el('div', null, '(empty)')); return; }
+    const ul = el('ul', { style: 'margin:0;padding-left:18px;font-size:13px' });
+    todos.forEach(t => {
+      const li = el('li');
+      const marker = t.status === 'completed' ? '✓' : t.status === 'in_progress' ? '◐' : '○';
+      li.textContent = marker + ' ' + (t.content || t.title || '');
+      ul.appendChild(li);
+    });
+    body.appendChild(ul);
+  }
+
+  function renderAgentInput(body, input) {
+    body.appendChild(el('div', { class: 'section-label' }, 'Agent'));
+    const kv = el('div', { class: 'kv' });
+    if (input.subagent_type) { kv.appendChild(el('span', { class: 'k' }, 'type')); kv.appendChild(el('span', { class: 'v' }, input.subagent_type)); }
+    if (input.description) { kv.appendChild(el('span', { class: 'k' }, 'description')); kv.appendChild(el('span', { class: 'v' }, input.description)); }
+    body.appendChild(kv);
+    if (input.prompt) {
+      body.appendChild(el('div', { class: 'section-label' }, [
+        'Prompt',
+        (() => {
+          const b = el('button', null, 'View full');
+          b.addEventListener('click', (ev) => { ev.preventDefault(); ev.stopPropagation(); openModal({
+            title: 'Agent prompt' + (input.subagent_type ? ' — ' + input.subagent_type : ''),
+            content: input.prompt, markdown: true,
+          }); });
+          return b;
+        })(),
+      ]));
+      const pre = el('pre', { class: 'result-text' });
+      pre.textContent = previewText(input.prompt, 12);
+      body.appendChild(pre);
+    }
+  }
+
+  function renderGenericInput(body, input) {
+    body.appendChild(el('div', { class: 'section-label' }, 'Input'));
+    const pre = el('pre', { class: 'code-block' });
+    const code = el('code', { class: 'language-json' });
+    try { code.textContent = JSON.stringify(input, null, 2); } catch (e) { code.textContent = String(input); }
+    pre.appendChild(code);
+    body.appendChild(pre);
+    try { hljs.highlightElement(code); } catch (e) {}
+  }
+
+  function renderResult(body, result, toolName, input) {
+    const labelRow = el('div', { class: 'section-label' }, result.is_error ? 'Result (error)' : 'Result');
+    if (result.text && result.text.length > 800) {
+      const viewBtn = el('button', null, 'View full');
+      viewBtn.addEventListener('click', (ev) => {
+        ev.preventDefault(); ev.stopPropagation();
+        const lang = (toolName === 'Read' || toolName === 'Write') ? langOf(input && (input.file_path || input.path)) : '';
+        openModal({
+          title: (toolName || 'Result') + ((input && input.file_path) ? ' — ' + input.file_path : ''),
+          meta: result.text.split('\n').length + ' lines',
+          content: result.text,
+          lang,
+        });
+      });
+      labelRow.appendChild(viewBtn);
+    }
+    if (result.text) {
+      body.appendChild(labelRow);
+      const rt = el('div', { class: 'result-text' + (result.is_error ? ' result-error' : '') });
+      // Show preview only when long
+      if (result.text.length > 6000) {
+        rt.textContent = result.text.slice(0, 6000) + '\n\n… (truncated — click View full above)';
+      } else {
+        rt.textContent = result.text;
+      }
+      body.appendChild(rt);
+    } else if (result.is_error) {
+      body.appendChild(labelRow);
+    }
+    (result.images || []).forEach(img => {
+      if (img.data) body.appendChild(el('img', { class: 'inline-img', src: 'data:' + (img.media_type || 'image/png') + ';base64,' + img.data, alt: 'tool image' }));
+    });
+    if (result.tool_refs && result.tool_refs.length) {
+      body.appendChild(el('div', { class: 'section-label' }, 'Loaded tools'));
+      body.appendChild(el('div', { style: 'font-family:var(--font-mono);font-size:12px' }, result.tool_refs.join(', ')));
+    }
+  }
+
+  // --- assistant
+  const renderAssistant = (e) => {
+    const wrap = el('div', { class: 'turn assistant' });
+    const label = el('div', { class: 'role-label' });
+    label.appendChild(document.createTextNode('Claude'));
+    if (e.model) label.appendChild(el('span', { class: 'model' }, e.model));
+    wrap.appendChild(label);
+    if (e.timestamp) wrap.appendChild(el('div', { class: 'ts' }, fmtTime(e.timestamp)));
+    const content = el('div', { class: 'content' });
+    (e.parts || []).forEach(p => {
+      const n = renderPart(p);
+      if (n) content.appendChild(n);
+    });
+    wrap.appendChild(content);
+    wrap.appendChild(makeCopyBtn(() => assistantToText(e)));
+    return wrap;
+  };
+
+  const assistantToText = (e) => {
+    return (e.parts || []).map(p => {
+      if (p.type === 'text') return p.text;
+      if (p.type === 'thinking') return '(thinking)\n' + p.text;
+      if (p.type === 'tool_use') {
+        let s = '[tool: ' + (p.name || '') + ']';
+        const preview = summarizeInput(p.name, p.input);
+        if (preview) s += ' ' + preview;
+        return s;
+      }
+      return '';
+    }).filter(Boolean).join('\n\n');
+  };
+
+  const renderCompact = () => el('div', { class: 'system-divider' }, '⎯ compact boundary ⎯');
+  const renderSystem = (e) => { const n = el('div', { class: 'system-event' }); n.textContent = e.content || ''; return n; };
+
+  // --------------------------------------------------------------- Flow
+
+  const dropZone = document.getElementById('drop-zone');
+  const fileInput = document.getElementById('file-input');
+  const pickFile = document.getElementById('pick-file');
+  const startScreen = document.getElementById('start-screen');
+  const loading = document.getElementById('loading');
+  const feed = document.getElementById('feed');
+  const bottombar = document.getElementById('bottombar');
+  const errorEl = document.getElementById('error');
+  const metaArea = document.getElementById('meta-area');
+  const controls = document.getElementById('controls-area');
+
+  function showError(msg) {
+    errorEl.textContent = msg || '';
+  }
+
+  async function loadFile(file) {
+    showError('');
+    if (!file) return;
+    startScreen.hidden = true;
+    loading.classList.add('show');
+    feed.hidden = true;
+    bottombar.hidden = true;
+    try {
+      const text = await file.text();
+      // defer to next tick so loading indicator actually paints
+      await new Promise(requestAnimationFrame);
+      const records = parseJsonl(text);
+      if (!records.length) throw new Error('No JSON records parsed. Is this a Claude .jsonl session file?');
+      const meta = extractMeta(records);
+      const events = buildEvents(records);
+      renderAll(meta, events, file);
+    } catch (err) {
+      loading.classList.remove('show');
+      startScreen.hidden = false;
+      showError('Failed: ' + err.message);
+    }
+  }
+
+  function renderAll(meta, events, file) {
+    document.title = meta.title || ('Claude session ' + (meta.session_id || ''));
+
+    metaArea.innerHTML = '';
+    const bits = [];
+    if (meta.title) bits.push(el('span', null, meta.title));
+    if (meta.session_id) { const c = document.createElement('code'); c.textContent = meta.session_id.slice(0, 8); bits.push(c); }
+    if (meta.cwd) bits.push(el('span', null, meta.cwd));
+    if (meta.models && meta.models.length) bits.push(el('span', null, meta.models.join(', ')));
+    if (meta.started) bits.push(el('span', null, fmtTime(meta.started)));
+    bits.push(el('span', null, events.length + ' events'));
+    if (file) bits.push(el('span', null, fmtBytes(file.size)));
+    bits.forEach((b, i) => {
+      if (i > 0) metaArea.appendChild(document.createTextNode(' · '));
+      metaArea.appendChild(b);
+    });
+
+    feed.innerHTML = '';
+    const frag = document.createDocumentFragment();
+    events.forEach(e => {
+      let node;
+      switch (e.kind) {
+        case 'user': node = renderUser(e); break;
+        case 'assistant': node = renderAssistant(e); break;
+        case 'compact': node = renderCompact(e); break;
+        case 'system': node = renderSystem(e); break;
+      }
+      if (node) frag.appendChild(node);
+    });
+    feed.appendChild(frag);
+
+    feed.querySelectorAll('.md pre code').forEach((el) => { try { hljs.highlightElement(el); } catch (e) {} });
+
+    // reveal
+    loading.classList.remove('show');
+    feed.hidden = false;
+    bottombar.hidden = false;
+    controls.hidden = false;
+
+    // store events for global actions
+    window._sv = { meta, events };
+    window.scrollTo(0, 0);
+  }
+
+  // --- dropzone handlers
+  const accept = (f) => !!f && /\.(jsonl|json|ndjson)$/i.test(f.name);
+
+  dropZone.addEventListener('click', (e) => {
+    if (e.target === pickFile) return;
+    fileInput.click();
+  });
+  pickFile.addEventListener('click', (e) => { e.stopPropagation(); fileInput.click(); });
+  fileInput.addEventListener('change', (e) => {
+    const f = e.target.files && e.target.files[0];
+    if (f) loadFile(f);
+  });
+  ['dragenter', 'dragover'].forEach(ev => dropZone.addEventListener(ev, (e) => {
+    e.preventDefault(); e.stopPropagation();
+    dropZone.classList.add('drag-over');
+  }));
+  ['dragleave', 'dragend'].forEach(ev => dropZone.addEventListener(ev, () => dropZone.classList.remove('drag-over')));
+  dropZone.addEventListener('drop', (e) => {
+    e.preventDefault(); e.stopPropagation();
+    dropZone.classList.remove('drag-over');
+    const f = e.dataTransfer.files && e.dataTransfer.files[0];
+    if (!f) return;
+    if (!accept(f)) { showError('Expected a .jsonl (or .json / .ndjson) file; got: ' + f.name); return; }
+    loadFile(f);
+  });
+
+  // allow dropping anywhere once feed is loaded
+  window.addEventListener('dragover', (e) => { e.preventDefault(); });
+  window.addEventListener('drop', (e) => {
+    if (!startScreen.hidden) return; // start screen handles its own
+    e.preventDefault();
+    const f = e.dataTransfer.files && e.dataTransfer.files[0];
+    if (f && accept(f)) loadFile(f);
+  });
+
+  // --- header controls
+  document.getElementById('toggle-thinking').addEventListener('change', (e) => {
+    document.body.classList.toggle('hide-thinking', !e.target.checked);
+  });
+  document.getElementById('toggle-tools').addEventListener('change', (e) => {
+    document.body.classList.toggle('hide-tools', !e.target.checked);
+  });
+  document.getElementById('expand-all').addEventListener('click', () => {
+    feed.querySelectorAll('details').forEach(d => d.open = true);
+  });
+  document.getElementById('collapse-all').addEventListener('click', () => {
+    feed.querySelectorAll('details').forEach(d => d.open = false);
+  });
+  document.getElementById('copy-all').addEventListener('click', async () => {
+    const sv = window._sv;
+    if (!sv) return;
+    const parts = [];
+    sv.events.forEach(e => {
+      if (e.kind === 'user') parts.push('## User\n\n' + (e.text || ''));
+      else if (e.kind === 'assistant') parts.push('## Claude\n\n' + assistantToText(e));
+      else if (e.kind === 'compact') parts.push('--- compact boundary ---');
+    });
+    try {
+      await navigator.clipboard.writeText(parts.join('\n\n'));
+      const btn = document.getElementById('copy-all');
+      const prev = btn.textContent;
+      btn.textContent = 'Copied!';
+      setTimeout(() => { btn.textContent = prev; }, 1500);
+    } catch (err) { alert('Copy failed: ' + err.message); }
+  });
+  document.getElementById('load-new').addEventListener('click', () => {
+    feed.hidden = true; bottombar.hidden = true; controls.hidden = true;
+    metaArea.innerHTML = '';
+    startScreen.hidden = false;
+    fileInput.value = '';
+    window._sv = null;
+    window.scrollTo(0, 0);
+  });
+
+  // --- search
+  const searchInput = document.getElementById('search');
+  let searchTimer;
+  searchInput.addEventListener('input', () => {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => doSearch(searchInput.value), 150);
+  });
+  function clearHighlights() {
+    feed.querySelectorAll('mark.hl').forEach(m => {
+      const parent = m.parentNode;
+      parent.replaceChild(document.createTextNode(m.textContent), m);
+      parent.normalize();
+    });
+  }
+  function highlightIn(node, re) {
+    let count = 0;
+    const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT, {
+      acceptNode: (n) => {
+        if (!n.nodeValue || !n.nodeValue.trim()) return NodeFilter.FILTER_REJECT;
+        const p = n.parentNode;
+        if (!p) return NodeFilter.FILTER_REJECT;
+        if (['SCRIPT', 'STYLE'].includes(p.nodeName)) return NodeFilter.FILTER_REJECT;
+        return NodeFilter.FILTER_ACCEPT;
+      }
+    });
+    const targets = [];
+    let cur;
+    while ((cur = walker.nextNode())) targets.push(cur);
+    targets.forEach(textNode => {
+      const val = textNode.nodeValue;
+      re.lastIndex = 0;
+      if (!re.test(val)) return;
+      re.lastIndex = 0;
+      const frag = document.createDocumentFragment();
+      let last = 0, m;
+      while ((m = re.exec(val)) !== null) {
+        if (m.index > last) frag.appendChild(document.createTextNode(val.slice(last, m.index)));
+        const mark = document.createElement('mark');
+        mark.className = 'hl';
+        mark.textContent = m[0];
+        frag.appendChild(mark);
+        last = m.index + m[0].length;
+        count++;
+        if (m.index === re.lastIndex) re.lastIndex++;
+      }
+      if (last < val.length) frag.appendChild(document.createTextNode(val.slice(last)));
+      textNode.parentNode.replaceChild(frag, textNode);
+    });
+    return count;
+  }
+  function doSearch(q) {
+    clearHighlights();
+    const mc = document.getElementById('match-count');
+    if (!q || q.length < 2) { mc.textContent = ''; return; }
+    const safe = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const re = new RegExp(safe, 'gi');
+    const count = highlightIn(feed, re);
+    mc.textContent = count ? count + ' matches' : 'no matches';
+    const first = feed.querySelector('mark.hl');
+    if (first) {
+      let p = first.parentNode;
+      while (p && p !== feed) {
+        if (p.tagName === 'DETAILS') p.open = true;
+        p = p.parentNode;
+      }
+      first.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+  }
+
+  // --- load from ?url= query for direct sharing (optional)
+  const qs = new URLSearchParams(location.search);
+  const remoteUrl = qs.get('url');
+  if (remoteUrl) {
+    (async () => {
+      try {
+        startScreen.hidden = true;
+        loading.classList.add('show');
+        const r = await fetch(remoteUrl);
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        const text = await r.text();
+        const name = remoteUrl.split('/').pop() || 'remote.jsonl';
+        const blob = new File([text], name, { type: 'application/jsonl' });
+        await loadFile(blob);
+      } catch (err) {
+        loading.classList.remove('show');
+        startScreen.hidden = false;
+        showError('Failed to load ' + remoteUrl + ': ' + err.message);
+      }
+    })();
+  }
+})();
+</script>
+</body>
+</html>

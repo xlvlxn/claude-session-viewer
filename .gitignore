@@ -1,0 +1,5 @@
+sessions/
+viewer.html
+*.jsonl
+.DS_Store
+__pycache__/
